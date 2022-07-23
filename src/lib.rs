@@ -12,16 +12,14 @@ use std::{
     task::{Context, Poll},
 };
 
-use axum::{body::HttpBody, http::Uri};
+use axum::http::Uri;
 use tower_service::Service;
 
 /// Service that forwards all requests to another service
 /// ```rust
 /// #[tokio::main]
 /// async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-///     let http_client = reqwest::Client::new();
 ///     let strangler_svc = axum_strangler::StranglerService::new(
-///         http_client,
 ///         axum::http::uri::Authority::from_static("127.0.0.1:3333"),
 ///         axum::http::uri::Scheme::HTTP,
 ///     );
@@ -37,7 +35,7 @@ use tower_service::Service;
 /// ```
 #[derive(Clone)]
 pub struct StranglerService {
-    http_client: reqwest::Client,
+    http_client: hyper::Client<hyper::client::HttpConnector>,
     inner: Arc<InnerStranglerService>,
 }
 
@@ -46,12 +44,11 @@ impl StranglerService {
     /// * The `strangled_authority` is the host & port of the service to be strangled.
     /// * The `strangled_scheme` is which scheme the strangled service has to make
     pub fn new(
-        http_client: reqwest::Client,
         strangled_authority: axum::http::uri::Authority,
         strangled_scheme: axum::http::uri::Scheme,
     ) -> Self {
         Self {
-            http_client,
+            http_client: hyper::Client::new(),
             inner: Arc::new(InnerStranglerService {
                 strangled_authority,
                 strangled_scheme,
@@ -74,7 +71,7 @@ impl Service<axum::http::Request<axum::body::Body>> for StranglerService {
         Poll::Ready(Ok(()))
     }
 
-    fn call(&mut self, req: axum::http::Request<axum::body::Body>) -> Self::Future {
+    fn call(&mut self, mut req: axum::http::Request<axum::body::Body>) -> Self::Future {
         let http_client = self.http_client.clone();
 
         let uri = Uri::builder()
@@ -84,40 +81,22 @@ impl Service<axum::http::Request<axum::body::Body>> for StranglerService {
             .build()
             .unwrap();
 
-        // TODO: set up headers
-        let request_to_strangled = http_client.request(req.method().clone(), &uri.to_string());
+        *req.uri_mut() = uri;
 
         let fut = async move {
-            let r = {
-                request_to_strangled
-                    .send()
-                    .await
-                    .map_err(|_e| axum::http::StatusCode::INTERNAL_SERVER_ERROR)
-                    .unwrap()
-            };
+            let r = http_client.request(req).await.unwrap();
 
             let mut response_builder = axum::response::Response::builder();
             response_builder = response_builder.status(r.status());
 
-            let body = r
-                .bytes()
-                .await
-                .map_err(|_e| axum::http::StatusCode::INTERNAL_SERVER_ERROR)
-                .unwrap();
-
-            // TODO: map the headers.
-
-            let response_body = axum::body::BoxBody::new(
-                axum::body::Full::new(body)
-                    .map_err(|_e| axum::Error::new("Making the typesystem happy")),
-            );
+            if let Some(headers) = response_builder.headers_mut() {
+                *headers = r.headers().clone();
+            }
 
             let response = response_builder
-                .body(response_body)
+                .body(axum::body::boxed(r))
                 .map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR);
 
-            // TODO: map Result<,x> to Result<,Infallible> by converting the the response to be a
-            // 500 with an empty body.
             match response {
                 Ok(response) => Ok(response),
                 Err(_) => todo!(),
@@ -136,13 +115,11 @@ mod tests {
 
     /// Create a mock service that's not connecting to anything.
     fn make_svc() -> StranglerService {
-        let client = reqwest::Client::new();
-        let strangler_svc = StranglerService::new(
-            client,
+        
+        StranglerService::new(
             axum::http::uri::Authority::from_static("127.0.0.1:0"),
             axum::http::uri::Scheme::HTTP,
-        );
-        strangler_svc
+        )
     }
 
     #[tokio::test]
@@ -169,7 +146,7 @@ mod tests {
         let strangler_tcp = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let strangler_port = strangler_tcp.local_addr().unwrap().port();
 
-        let client = reqwest::Client::new();
+        let client = hyper::Client::new();
         let strangler_svc = StranglerService {
             http_client: client,
             inner: Arc::new(InnerStranglerService {
@@ -227,5 +204,9 @@ mod tests {
 
         background_stranglee_handle.await.unwrap();
         background_strangler_handle.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn text_content_type_gets_propagated() {
     }
 }
