@@ -301,7 +301,7 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
-    use axum::{routing::get, Router};
+    use axum::{routing::get, Extension, Router};
 
     /// Create a mock service that's not connecting to anything.
     fn make_svc() -> StranglerService {
@@ -323,11 +323,20 @@ mod tests {
         axum::Server::bind(&"0.0.0.0:0".parse().unwrap()).serve(router.into_make_service());
     }
 
-    #[tokio::test]
-    async fn proxies_strangled_http_service() {
+    #[derive(Clone)]
+    struct StopChannel(Arc<tokio::sync::broadcast::Sender<()>>);
+
+    struct StartupHelper {
+        strangler_port: u16,
+        strangler_joinhandle: tokio::task::JoinHandle<()>,
+        stranglee_joinhandle: tokio::task::JoinHandle<()>,
+    }
+
+    async fn start_up_strangler_and_strangled(strangled_router: Router) -> StartupHelper {
         let (tx, mut rx_1) = tokio::sync::broadcast::channel::<()>(1);
         let mut rx_2 = tx.subscribe();
         let tx_arc = Arc::new(tx);
+        let stop_channel = StopChannel(tx_arc);
 
         let stranglee_tcp = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let stranglee_port = stranglee_tcp.local_addr().unwrap().port();
@@ -349,17 +358,13 @@ mod tests {
         };
 
         let background_stranglee_handle = tokio::spawn(async move {
-            let router = Router::new().route(
-                "/api/something",
-                get(|| async move {
-                    tx_arc.send(()).unwrap();
-                    "I'm being strangled"
-                }),
-            );
-
             axum::Server::from_tcp(stranglee_tcp)
                 .unwrap()
-                .serve(router.into_make_service())
+                .serve(
+                    strangled_router
+                        .layer(axum::Extension(stop_channel))
+                        .into_make_service(),
+                )
                 .with_graceful_shutdown(async {
                     rx_1.recv().await.ok();
                 })
@@ -378,6 +383,31 @@ mod tests {
                 .await
                 .unwrap();
         });
+
+        StartupHelper {
+            strangler_port,
+            strangler_joinhandle: background_strangler_handle,
+            stranglee_joinhandle: background_stranglee_handle,
+        }
+    }
+
+    #[tokio::test]
+    async fn proxies_strangled_http_service() {
+        let router = Router::new().route(
+            "/api/something",
+            get(
+                |Extension(StopChannel(tx_arc)): Extension<StopChannel>| async move {
+                    tx_arc.send(()).unwrap();
+                    "I'm being strangled"
+                },
+            ),
+        );
+
+        let StartupHelper {
+            strangler_port,
+            strangler_joinhandle,
+            stranglee_joinhandle,
+        } = start_up_strangler_and_strangled(router).await;
 
         let c = reqwest::Client::new();
         let r = c
@@ -391,81 +421,42 @@ mod tests {
 
         assert_eq!(r, "I'm being strangled");
 
-        background_stranglee_handle.await.unwrap();
-        background_strangler_handle.await.unwrap();
+        stranglee_joinhandle.await.unwrap();
+        strangler_joinhandle.await.unwrap();
     }
 
     #[tokio::test]
     async fn proxies_strangled_websocket_service() {
-        let (tx, mut rx_1) = tokio::sync::broadcast::channel::<()>(1);
-        let mut rx_2 = tx.subscribe();
-        let tx_arc = Arc::new(tx);
-
-        let stranglee_tcp = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let stranglee_port = stranglee_tcp.local_addr().unwrap().port();
-
-        let strangler_tcp = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let strangler_port = strangler_tcp.local_addr().unwrap().port();
-
-        let client = hyper::Client::new();
-        let strangler_svc = StranglerService {
-            http_client: client,
-            inner: Arc::new(InnerStranglerService {
-                strangled_authority: axum::http::uri::Authority::try_from(format!(
-                    "127.0.0.1:{}",
-                    stranglee_port
-                ))
-                .unwrap(),
-                strangled_scheme_security: SchemeSecurity::None,
-            }),
-        };
-
         // helper function
         async fn handle_socket(
             mut socket: WebSocket,
             tx_arc: Arc<tokio::sync::broadcast::Sender<()>>,
         ) {
             // Only reply to a single message and stop.
-            if let Some(msg) = socket.recv().await {
-                if let Ok(msg) = msg {
-                    if socket.send(msg).await.is_err() {
-                        // client disconnected
-                        return;
-                    }
-                };
+            if let Some(Ok(msg)) = socket.recv().await {
+                if socket.send(msg).await.is_err() {
+                    // client disconnected
+                    return;
+                }
             }
             tx_arc.send(()).unwrap();
         }
 
-        let background_stranglee_handle = tokio::spawn(async move {
-            let router = Router::new().route(
-                "/api/websocket",
-                get(|ws: axum::extract::ws::WebSocketUpgrade| async move {
+        let router = Router::new().route(
+            "/api/websocket",
+            get(
+                |ws: axum::extract::ws::WebSocketUpgrade,
+                 Extension(StopChannel(tx_arc)): Extension<StopChannel>| async move {
                     ws.on_upgrade(|socket| handle_socket(socket, tx_arc))
-                }),
-            );
+                },
+            ),
+        );
 
-            axum::Server::from_tcp(stranglee_tcp)
-                .unwrap()
-                .serve(router.into_make_service())
-                .with_graceful_shutdown(async {
-                    rx_1.recv().await.ok();
-                })
-                .await
-                .unwrap();
-        });
-
-        let background_strangler_handle = tokio::spawn(async move {
-            let router = Router::new().fallback(strangler_svc);
-            axum::Server::from_tcp(strangler_tcp)
-                .unwrap()
-                .serve(router.into_make_service())
-                .with_graceful_shutdown(async {
-                    rx_2.recv().await.ok();
-                })
-                .await
-                .unwrap();
-        });
+        let StartupHelper {
+            strangler_port,
+            strangler_joinhandle,
+            stranglee_joinhandle,
+        } = start_up_strangler_and_strangled(router).await;
 
         let message = "A websocket message";
         let (mut ws_connection, _) = tokio_tungstenite::connect_async(format!(
@@ -488,7 +479,7 @@ mod tests {
             _ => panic!("We expected text back but got something else!"),
         }
 
-        background_stranglee_handle.await.unwrap();
-        background_strangler_handle.await.unwrap();
+        stranglee_joinhandle.await.unwrap();
+        strangler_joinhandle.await.unwrap();
     }
 }
