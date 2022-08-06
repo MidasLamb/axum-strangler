@@ -1,6 +1,6 @@
 [package]
 name = "axum-strangler"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 description = "Strangler fig pattern utility crate for the Axum framework"
