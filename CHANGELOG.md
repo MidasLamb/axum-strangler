@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.1
+* Add support for HTTPS
+* Rewrite HOST header such that proxies down the line can correctly forward it (i.e. tls termination)
+
 ## 0.3.0
 * Support for websocket strangling.
 * Added a bit of tracing.

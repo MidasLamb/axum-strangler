@@ -47,7 +47,7 @@ pub enum SchemeSecurity {
 /// ```
 #[derive(Clone)]
 pub struct StranglerService {
-    http_client: hyper::Client<hyper::client::HttpConnector>,
+    http_client: hyper::Client<hyper_tls::HttpsConnector<hyper::client::HttpConnector>>,
     inner: Arc<InnerStranglerService>,
 }
 
@@ -59,8 +59,10 @@ impl StranglerService {
         strangled_authority: axum::http::uri::Authority,
         strangled_scheme_security: SchemeSecurity,
     ) -> Self {
+        let https = hyper_tls::HttpsConnector::new();
+        let client = hyper::Client::builder().build::<_, hyper::Body>(https);
         Self {
-            http_client: hyper::Client::new(),
+            http_client: client,
             inner: Arc::new(InnerStranglerService {
                 strangled_authority,
                 strangled_scheme_security,
@@ -96,7 +98,7 @@ impl Service<axum::http::Request<axum::body::Body>> for StranglerService {
                                                                 // "full" uri, as host etc gets
                                                                 // removed by axum already.
 async fn forward_call_to_strangled(
-    http_client: hyper::Client<hyper::client::HttpConnector>,
+    http_client: hyper::Client<hyper_tls::HttpsConnector<hyper::client::HttpConnector>>,
     inner: Arc<InnerStranglerService>,
     req: axum::http::Request<axum::body::Body>,
 ) -> Result<axum::response::Response, Infallible> {
@@ -137,13 +139,19 @@ async fn forward_call_to_strangled(
                 }
             };
             Uri::builder()
-                .authority(strangled_authority)
                 .scheme(strangled_scheme)
+                .authority(strangled_authority)
                 .path_and_query(req.uri().path_and_query().cloned().unwrap())
                 .build()
                 .unwrap()
         }
     };
+
+    // Change the host header so any sort of other proxy in between can route correctly based on
+    // hostname.
+    if let Some(host) = req.headers_mut().get_mut("host") {
+        *host = axum::http::HeaderValue::from_str(uri.authority().unwrap().as_str()).unwrap()
+    }
 
     *req.uri_mut() = uri;
 
@@ -344,7 +352,8 @@ mod tests {
         let strangler_tcp = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let strangler_port = strangler_tcp.local_addr().unwrap().port();
 
-        let client = hyper::Client::new();
+        let https = hyper_tls::HttpsConnector::new();
+        let client = hyper::Client::builder().build::<_, hyper::Body>(https);
         let strangler_svc = StranglerService {
             http_client: client,
             inner: Arc::new(InnerStranglerService {
