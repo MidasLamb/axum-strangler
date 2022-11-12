@@ -11,7 +11,6 @@ homepage = "https://github.com/MidasLamb/axum-strangler"
 [dependencies]
 axum = { version = "0.5.13", features = ["ws"]}
 hyper = { version = "0.14.20", features = ["client", "http2", "tcp"] }
-reqwest = "0.11.11"
 tower-service = "0.3.2"
 tokio-tungstenite = "0.17.2"
 tokio = { version = "1.20.0", features = ["full"] }
