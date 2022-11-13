@@ -49,7 +49,7 @@ impl InnerStranglerService {
             .unwrap();
 
         let (connection, _) = tokio_tungstenite::connect_async(uri).await.unwrap();
-        return Ok(wsu.on_upgrade(|socket| on_websocket_upgrade(socket, connection)));
+        Ok(wsu.on_upgrade(|socket| on_websocket_upgrade(socket, connection)))
     }
 }
 

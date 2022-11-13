@@ -9,14 +9,14 @@ type Client = hyper::Client<hyper_tls::HttpsConnector<hyper::client::HttpConnect
 
 pub(crate) struct InnerStranglerService {
     strangled_authority: axum::http::uri::Authority,
-    strangled_scheme_security: crate::SchemeSecurity,
+    strangled_scheme_security: SchemeSecurity,
     http_client: Client,
 }
 
 impl InnerStranglerService {
     pub(crate) fn new(
         strangled_authority: axum::http::uri::Authority,
-        strangled_scheme_security: crate::SchemeSecurity,
+        strangled_scheme_security: SchemeSecurity,
         http_client: Client,
     ) -> Self {
         Self {
