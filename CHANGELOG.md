@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- `websocket` support has been put behind a feature flag.
 - Remove unused `reqwest` dependency (#7), thanks to @syphar.
 
 ## 0.3.1
