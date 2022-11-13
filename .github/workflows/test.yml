@@ -6,7 +6,7 @@ name: cargo test
 jobs:
   test:
     runs-on: ubuntu-latest
-    name: test
+    name: test default features
     steps:
       - uses: actions-rs/toolchain@v1
         with:
@@ -19,7 +19,7 @@ jobs:
           command: test
   test-websocket:
     runs-on: ubuntu-latest
-    name: test
+    name: test websocket
     steps:
       - uses: actions-rs/toolchain@v1
         with:
