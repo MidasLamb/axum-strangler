@@ -1,11 +1,9 @@
 use axum::http::Uri;
 
-use crate::SchemeSecurity;
+use crate::{Client, SchemeSecurity};
 
 #[cfg(feature = "websocket")]
 mod websocket;
-
-type Client = hyper::Client<hyper_tls::HttpsConnector<hyper::client::HttpConnector>>;
 
 pub(crate) struct InnerStranglerService {
     strangled_authority: axum::http::uri::Authority,
@@ -81,7 +79,14 @@ impl InnerStranglerService {
         Err(req)
     }
 
-    #[cfg(not(feature = "websocket"))]
+    #[cfg(all(not(feature = "websocket"), not(feature = "tls")))]
+    fn get_http_scheme(&self) -> axum::http::uri::Scheme {
+        match self.strangled_scheme_security {
+            SchemeSecurity::None => axum::http::uri::Scheme::HTTP,
+        }
+    }
+
+    #[cfg(all(not(feature = "websocket"), feature = "tls"))]
     fn get_http_scheme(&self) -> axum::http::uri::Scheme {
         match self.strangled_scheme_security {
             SchemeSecurity::None => axum::http::uri::Scheme::HTTP,

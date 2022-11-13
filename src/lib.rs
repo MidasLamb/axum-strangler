@@ -18,9 +18,24 @@ mod inner;
 
 use inner::InnerStranglerService;
 
+#[cfg(feature = "tls")]
+pub(crate) type Client = hyper::Client<hyper_tls::HttpsConnector<hyper::client::HttpConnector>>;
+#[cfg(not(feature = "tls"))]
+pub(crate) type Client = hyper::Client<hyper::client::HttpConnector>;
+
+#[cfg(feature = "tls")]
+fn build_hyper_client() -> Client {
+    hyper::Client::builder().build::<_, hyper::Body>(hyper_tls::HttpsConnector::new())
+}
+#[cfg(not(feature = "tls"))]
+fn build_hyper_client() -> Client {
+    hyper::Client::new()
+}
+
 #[derive(Clone)]
 pub enum SchemeSecurity {
     None,
+    #[cfg(feature = "tls")]
     Https,
     #[cfg(feature = "websocket")]
     Wss,
@@ -59,13 +74,11 @@ impl StranglerService {
         strangled_authority: axum::http::uri::Authority,
         strangled_scheme_security: SchemeSecurity,
     ) -> Self {
-        let https = hyper_tls::HttpsConnector::new();
-        let client = hyper::Client::builder().build::<_, hyper::Body>(https);
         Self {
             inner: Arc::new(InnerStranglerService::new(
                 strangled_authority,
                 strangled_scheme_security,
-                client,
+                build_hyper_client(),
             )),
         }
     }
@@ -136,8 +149,7 @@ mod tests {
         let strangler_tcp = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let strangler_port = strangler_tcp.local_addr().unwrap().port();
 
-        let https = hyper_tls::HttpsConnector::new();
-        let client = hyper::Client::builder().build::<_, hyper::Body>(https);
+        let client = build_hyper_client();
         let strangler_svc = StranglerService {
             inner: Arc::new(InnerStranglerService::new(
                 axum::http::uri::Authority::try_from(format!("127.0.0.1:{}", stranglee_port))

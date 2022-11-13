@@ -16,14 +16,15 @@ tokio-tungstenite = { version = "0.17.2", optional = true }
 tokio = { version = "1.20.0", features = ["full"] }
 futures-util = { version = "0.3.21", features = ["futures-sink"] }
 tracing = "0.1.36"
-hyper-tls = "0.5.0"
+hyper-tls = { version = "0.5.0", optional = true }
 
 [dev-dependencies]
 reqwest = "0.11.11"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [features]
-websocket = ["dep:tokio-tungstenite", "axum/ws"]
+tls = ["dep:hyper-tls"]
+websocket = ["tls", "dep:tokio-tungstenite", "axum/ws"]
 
 
 [[example]]
