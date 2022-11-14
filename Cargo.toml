@@ -46,3 +46,6 @@ websocket-rustls-tls-webpki-roots = [
 [[example]]
 name = "simple_server"
 required-features = ["websocket"]
+
+[package.metadata.cargo-all-features]
+skip_optional_dependencies = true
