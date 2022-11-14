@@ -1,32 +1,27 @@
 use axum::http::Uri;
 
-use crate::SchemeSecurity;
+use crate::HttpScheme;
+
+#[cfg(feature = "websocket")]
+use crate::WebSocketScheme;
 
 #[cfg(feature = "websocket")]
 mod websocket;
 
-type Client = hyper::Client<hyper_tls::HttpsConnector<hyper::client::HttpConnector>>;
-
-pub(crate) struct InnerStranglerService {
-    strangled_authority: axum::http::uri::Authority,
-    strangled_scheme_security: SchemeSecurity,
-    http_client: Client,
+#[axum::async_trait]
+pub(crate) trait InnerStrangler {
+    async fn forward_call_to_strangled(
+        &self,
+        req: axum::http::Request<axum::body::Body>,
+    ) -> axum::response::Response;
 }
 
-impl InnerStranglerService {
-    pub(crate) fn new(
-        strangled_authority: axum::http::uri::Authority,
-        strangled_scheme_security: SchemeSecurity,
-        http_client: Client,
-    ) -> Self {
-        Self {
-            strangled_authority,
-            strangled_scheme_security,
-            http_client,
-        }
-    }
-
-    pub(crate) async fn forward_call_to_strangled(
+#[axum::async_trait]
+impl<C> InnerStrangler for InnerStranglerService<C>
+where
+    C: hyper::client::connect::Connect + Clone + Send + Sync + 'static,
+{
+    async fn forward_call_to_strangled(
         &self,
         req: axum::http::Request<axum::body::Body>,
     ) -> axum::response::Response {
@@ -72,6 +67,34 @@ impl InnerStranglerService {
             Err(_) => todo!(),
         }
     }
+}
+
+pub(crate) struct InnerStranglerService<C> {
+    strangled_authority: axum::http::uri::Authority,
+    strangled_http_scheme: HttpScheme,
+    #[cfg(feature = "websocket")]
+    strangled_web_socket_scheme: WebSocketScheme,
+    http_client: hyper::Client<C>,
+}
+
+impl<C> InnerStranglerService<C>
+where
+    C: hyper::client::connect::Connect + Clone + Send + Sync + 'static,
+{
+    pub(crate) fn new(
+        strangled_authority: axum::http::uri::Authority,
+        strangled_http_scheme: HttpScheme,
+        #[cfg(feature = "websocket")] strangled_web_socket_scheme: WebSocketScheme,
+        http_client: hyper::Client<C>,
+    ) -> Self {
+        Self {
+            strangled_authority,
+            strangled_http_scheme,
+            #[cfg(feature = "websocket")]
+            strangled_web_socket_scheme,
+            http_client,
+        }
+    }
 
     #[cfg(not(feature = "websocket"))]
     async fn handle_websocket_upgrade_request(
@@ -81,11 +104,11 @@ impl InnerStranglerService {
         Err(req)
     }
 
-    #[cfg(not(feature = "websocket"))]
     fn get_http_scheme(&self) -> axum::http::uri::Scheme {
-        match self.strangled_scheme_security {
-            SchemeSecurity::None => axum::http::uri::Scheme::HTTP,
-            SchemeSecurity::Https => axum::http::uri::Scheme::HTTPS,
+        match self.strangled_http_scheme {
+            HttpScheme::HTTP => axum::http::uri::Scheme::HTTP,
+            #[cfg(feature = "https")]
+            HttpScheme::HTTPS => axum::http::uri::Scheme::HTTPS,
         }
     }
 }

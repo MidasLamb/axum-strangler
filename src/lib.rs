@@ -14,18 +14,24 @@ use std::{
 
 use tower_service::Service;
 
+mod builder;
 mod inner;
 
-use inner::InnerStranglerService;
+pub enum HttpScheme {
+    HTTP,
+    #[cfg(feature = "https")]
+    HTTPS,
+}
 
-#[derive(Clone)]
-pub enum SchemeSecurity {
-    None,
-    Https,
-    #[cfg(feature = "websocket")]
-    Wss,
-    #[cfg(feature = "websocket")]
-    HttpsAndWss,
+#[cfg(feature = "websocket")]
+pub enum WebSocketScheme {
+    WS,
+    #[cfg(any(
+        feature = "websocket-native-tls",
+        feature = "websocket-rustls-tls-native-roots",
+        feature = "websocket-rustls-tls-webpki-roots"
+    ))]
+    WSS,
 }
 
 /// Service that forwards all requests to another service
@@ -34,7 +40,6 @@ pub enum SchemeSecurity {
 /// async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 ///     let strangler_svc = axum_strangler::StranglerService::new(
 ///         axum::http::uri::Authority::from_static("127.0.0.1:3333"),
-///         axum_strangler::SchemeSecurity::None,
 ///     );
 ///     let router = axum::Router::new().fallback(strangler_svc);
 ///     axum::Server::bind(&"127.0.0.1:0".parse()?)
@@ -48,26 +53,16 @@ pub enum SchemeSecurity {
 /// ```
 #[derive(Clone)]
 pub struct StranglerService {
-    inner: Arc<InnerStranglerService>,
+    inner: Arc<dyn inner::InnerStrangler + Send + Sync>,
 }
 
 impl StranglerService {
-    /// Construct a new `StranglerService`.
-    /// * The `strangled_authority` is the host & port of the service to be strangled.
-    /// * The `strangled_scheme` is which scheme the strangled service has to make
-    pub fn new(
-        strangled_authority: axum::http::uri::Authority,
-        strangled_scheme_security: SchemeSecurity,
-    ) -> Self {
-        let https = hyper_tls::HttpsConnector::new();
-        let client = hyper::Client::builder().build::<_, hyper::Body>(https);
-        Self {
-            inner: Arc::new(InnerStranglerService::new(
-                strangled_authority,
-                strangled_scheme_security,
-                client,
-            )),
-        }
+    pub fn new(strangled_authority: axum::http::uri::Authority) -> Self {
+        StranglerService::builder(strangled_authority).build()
+    }
+
+    pub fn builder(strangled_authority: axum::http::uri::Authority) -> builder::StranglerBuilder {
+        builder::StranglerBuilder::new(strangled_authority)
     }
 }
 
@@ -97,10 +92,7 @@ mod tests {
 
     /// Create a mock service that's not connecting to anything.
     fn make_svc() -> StranglerService {
-        StranglerService::new(
-            axum::http::uri::Authority::from_static("127.0.0.1:0"),
-            SchemeSecurity::None,
-        )
+        StranglerService::new(axum::http::uri::Authority::from_static("127.0.0.1:0"))
     }
 
     #[tokio::test]
@@ -136,16 +128,9 @@ mod tests {
         let strangler_tcp = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let strangler_port = strangler_tcp.local_addr().unwrap().port();
 
-        let https = hyper_tls::HttpsConnector::new();
-        let client = hyper::Client::builder().build::<_, hyper::Body>(https);
-        let strangler_svc = StranglerService {
-            inner: Arc::new(InnerStranglerService::new(
-                axum::http::uri::Authority::try_from(format!("127.0.0.1:{}", stranglee_port))
-                    .unwrap(),
-                SchemeSecurity::None,
-                client,
-            )),
-        };
+        let strangler_svc = StranglerService::new(
+            axum::http::uri::Authority::try_from(format!("127.0.0.1:{}", stranglee_port)).unwrap(),
+        );
 
         let background_stranglee_handle = tokio::spawn(async move {
             axum::Server::from_tcp(stranglee_tcp)
