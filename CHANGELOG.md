@@ -2,8 +2,10 @@
 
 ## Unreleased
 
+- Https & Wss support has been put behind the appropriate feature flags ([#12](https://github.com/MidasLamb/axum-strangler/pull/12))
+- `tokio` dependency has been made optional ([#10](https://github.com/MidasLamb/axum-strangler/pull/10)), thanks to @syphar.
 - `websocket` support has been put behind a feature flag.
-- Remove unused `reqwest` dependency (#7), thanks to @syphar.
+- Remove unused `reqwest` dependency ([#7](https://github.com/MidasLamb/axum-strangler/pull/7)), thanks to @syphar.
 
 ## 0.3.1
 
