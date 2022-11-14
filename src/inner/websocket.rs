@@ -7,17 +7,10 @@ use futures_util::{SinkExt, StreamExt};
 use tokio_tungstenite::tungstenite::protocol::Message as TungsteniteMessage;
 
 use crate::inner::InnerStranglerService;
-use crate::SchemeSecurity;
+use crate::WebSocketScheme;
 
 #[cfg(feature = "websocket")]
-impl InnerStranglerService {
-    pub(super) fn get_http_scheme(&self) -> axum::http::uri::Scheme {
-        match self.strangled_scheme_security {
-            SchemeSecurity::None | SchemeSecurity::Wss => axum::http::uri::Scheme::HTTP,
-            SchemeSecurity::Https | SchemeSecurity::HttpsAndWss => axum::http::uri::Scheme::HTTPS,
-        }
-    }
-
+impl<C> InnerStranglerService<C> {
     pub(super) async fn handle_websocket_upgrade_request(
         &self,
         req: axum::http::Request<axum::body::Body>,
@@ -36,9 +29,14 @@ impl InnerStranglerService {
         let req = req.unwrap();
 
         let strangled_authority = self.strangled_authority.clone();
-        let strangled_scheme = match self.strangled_scheme_security {
-            SchemeSecurity::None | SchemeSecurity::Https => "ws",
-            SchemeSecurity::Wss | SchemeSecurity::HttpsAndWss => "wss",
+        let strangled_scheme = match self.strangled_web_socket_scheme {
+            WebSocketScheme::WS => "ws",
+            #[cfg(any(
+                feature = "websocket-native-tls",
+                feature = "websocket-rustls-tls-native-roots",
+                feature = "websocket-rustls-tls-webpki-roots"
+            ))]
+            WebSocketScheme::WSS => "wss",
         };
 
         let uri = Uri::builder()
@@ -209,16 +207,9 @@ mod tests {
         let strangler_tcp = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let strangler_port = strangler_tcp.local_addr().unwrap().port();
 
-        let https = hyper_tls::HttpsConnector::new();
-        let client = hyper::Client::builder().build::<_, hyper::Body>(https);
-        let strangler_svc = StranglerService {
-            inner: Arc::new(InnerStranglerService::new(
-                axum::http::uri::Authority::try_from(format!("127.0.0.1:{}", stranglee_port))
-                    .unwrap(),
-                SchemeSecurity::None,
-                client,
-            )),
-        };
+        let strangler_svc = StranglerService::new(
+            axum::http::uri::Authority::try_from(format!("127.0.0.1:{}", stranglee_port)).unwrap(),
+        );
 
         let background_stranglee_handle = tokio::spawn(async move {
             axum::Server::from_tcp(stranglee_tcp)

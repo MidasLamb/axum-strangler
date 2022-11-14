@@ -4,30 +4,21 @@ on:
   pull_request:
 name: cargo test
 jobs:
-  test:
+  test-all-features:
     runs-on: ubuntu-latest
-    name: test default features
+    name: test all features
     steps:
       - uses: actions-rs/toolchain@v1
         with:
           profile: minimal
           toolchain: stable
       - uses: actions/checkout@v2
-      - name: cargo test
+      - name: cargo install cargo-all-features
         uses: actions-rs/cargo@v1
         with:
-          command: test
-  test-websocket:
-    runs-on: ubuntu-latest
-    name: test websocket
-    steps:
-      - uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: stable
-      - uses: actions/checkout@v2
-      - name: cargo test
+          command: install
+          args: cargo-all-features
+      - name: cargo test-all-features
         uses: actions-rs/cargo@v1
         with:
-          command: test
-          args: --features websocket
+          command: test-all-features
