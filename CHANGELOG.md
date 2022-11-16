@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.0-rc.1
 
 - Make it optional to rewrite the `host` header to the strangled host.
 - Https & Wss support has been put behind the appropriate feature flags ([#12](https://github.com/MidasLamb/axum-strangler/pull/12))
