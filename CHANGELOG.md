@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Make it optional to rewrite the `host` header to the strangled host.
 - Https & Wss support has been put behind the appropriate feature flags ([#12](https://github.com/MidasLamb/axum-strangler/pull/12))
 - `tokio` dependency has been made optional ([#10](https://github.com/MidasLamb/axum-strangler/pull/10)), thanks to @syphar.
 - `websocket` support has been put behind a feature flag.

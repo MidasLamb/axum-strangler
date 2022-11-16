@@ -28,6 +28,7 @@ tokio = { version = "1.20.0", default-features = false, features = [
     "signal",
 ] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+wiremock = "0.5.15"
 
 [features]
 https = ["dep:hyper-tls"]

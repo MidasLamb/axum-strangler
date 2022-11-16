@@ -41,10 +41,11 @@ where
             .build()
             .unwrap();
 
-        // Change the host header so any sort of other proxy in between can route correctly based on
-        // hostname.
-        if let Some(host) = req.headers_mut().get_mut("host") {
-            *host = axum::http::HeaderValue::from_str(uri.authority().unwrap().as_str()).unwrap()
+        if self.rewrite_strangled_request_host_header {
+            if let Some(host) = req.headers_mut().get_mut("host") {
+                *host =
+                    axum::http::HeaderValue::from_str(uri.authority().unwrap().as_str()).unwrap()
+            }
         }
 
         *req.uri_mut() = uri;
@@ -75,6 +76,7 @@ pub(crate) struct InnerStranglerService<C> {
     #[cfg(feature = "websocket")]
     strangled_web_socket_scheme: WebSocketScheme,
     http_client: hyper::Client<C>,
+    rewrite_strangled_request_host_header: bool,
 }
 
 impl<C> InnerStranglerService<C>
@@ -86,6 +88,7 @@ where
         strangled_http_scheme: HttpScheme,
         #[cfg(feature = "websocket")] strangled_web_socket_scheme: WebSocketScheme,
         http_client: hyper::Client<C>,
+        rewrite_strangled_request_host_header: bool,
     ) -> Self {
         Self {
             strangled_authority,
@@ -93,6 +96,7 @@ where
             #[cfg(feature = "websocket")]
             strangled_web_socket_scheme,
             http_client,
+            rewrite_strangled_request_host_header,
         }
     }
 
@@ -110,5 +114,101 @@ where
             #[cfg(feature = "https")]
             HttpScheme::HTTPS => axum::http::uri::Scheme::HTTPS,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use wiremock::{
+        matchers::{header, method, path},
+        Mock, MockServer, ResponseTemplate,
+    };
+
+    use super::*;
+
+    #[tokio::test]
+    async fn no_header_rewriting() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/hello"))
+            .and(header("host", "something.com"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&mock_server)
+            .await;
+
+        let authority = axum::http::uri::Authority::try_from(format!(
+            "127.0.0.1:{}",
+            mock_server.address().port()
+        ))
+        .unwrap();
+
+        let client = hyper::client::Client::new();
+        let inner = InnerStranglerService::new(
+            authority,
+            HttpScheme::HTTP,
+            #[cfg(feature = "websocket")]
+            crate::WebSocketScheme::WS,
+            client,
+            false,
+        );
+        let mut request_builder = axum::http::Request::builder()
+            .method("GET")
+            .uri("http://something.com/hello");
+        request_builder.headers_mut().unwrap().insert(
+            "host",
+            axum::http::HeaderValue::from_static("something.com"),
+        );
+
+        let response = inner
+            .forward_call_to_strangled(
+                dbg!(request_builder.body(axum::body::Body::empty())).unwrap(),
+            )
+            .await;
+
+        assert_eq!(response.status(), axum::http::status::StatusCode::OK)
+    }
+
+    #[tokio::test]
+    async fn header_rewriting() {
+        let mock_server = MockServer::start().await;
+
+        let authority = axum::http::uri::Authority::try_from(format!(
+            "127.0.0.1:{}",
+            mock_server.address().port()
+        ))
+        .unwrap();
+
+        Mock::given(method("GET"))
+            .and(path("/hello"))
+            .and(header("host", authority.as_str()))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&mock_server)
+            .await;
+
+        let client = hyper::client::Client::new();
+        let inner = InnerStranglerService::new(
+            authority,
+            HttpScheme::HTTP,
+            #[cfg(feature = "websocket")]
+            crate::WebSocketScheme::WS,
+            client,
+            true,
+        );
+        let mut request_builder = axum::http::Request::builder()
+            .method("GET")
+            .uri("http://something.com/hello");
+        request_builder.headers_mut().unwrap().insert(
+            "host",
+            axum::http::HeaderValue::from_static("something.com"),
+        );
+
+        let response = inner
+            .forward_call_to_strangled(
+                dbg!(request_builder.body(axum::body::Body::empty())).unwrap(),
+            )
+            .await;
+
+        assert_eq!(response.status(), axum::http::status::StatusCode::OK)
     }
 }
