@@ -183,7 +183,6 @@ async fn on_websocket_upgrade(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::*;
     use axum::{routing::get, Extension, Router};
 

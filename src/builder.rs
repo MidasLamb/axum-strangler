@@ -12,6 +12,7 @@ pub struct StranglerBuilder {
     http_scheme: HttpScheme,
     #[cfg(feature = "websocket")]
     web_socket_scheme: WebSocketScheme,
+    rewrite_strangled_request_host_header: bool,
 }
 
 impl StranglerBuilder {
@@ -21,6 +22,7 @@ impl StranglerBuilder {
             http_scheme: HttpScheme::HTTP,
             #[cfg(feature = "websocket")]
             web_socket_scheme: WebSocketScheme::WS,
+            rewrite_strangled_request_host_header: false,
         }
     }
 
@@ -39,6 +41,16 @@ impl StranglerBuilder {
         }
     }
 
+    pub fn rewrite_strangled_request_host_header(
+        self,
+        rewrite_strangled_request_host_header: bool,
+    ) -> Self {
+        Self {
+            rewrite_strangled_request_host_header,
+            ..self
+        }
+    }
+
     pub fn build(self) -> StranglerService {
         let inner: Arc<dyn InnerStrangler + Send + Sync> = match self.http_scheme {
             HttpScheme::HTTP => {
@@ -48,6 +60,7 @@ impl StranglerBuilder {
                     #[cfg(feature = "websocket")]
                     self.web_socket_scheme,
                     hyper::Client::new(),
+                    self.rewrite_strangled_request_host_header,
                 );
                 Arc::new(inner)
             }
@@ -61,6 +74,7 @@ impl StranglerBuilder {
                     #[cfg(feature = "websocket")]
                     self.web_socket_scheme,
                     client,
+                    self.rewrite_strangled_request_host_header,
                 );
                 Arc::new(inner)
             }
