@@ -48,3 +48,17 @@ let strangler_svc = axum_strangler::StranglerService::builder(
 ### `websocket`
 
 Allows the strangler service to also handle websockets, forwarding every message from requester to strangled service and vice versa.
+
+#### TLS
+
+In order to work with websockets over TLS (`wss://`), you'll need to enable additional features.
+You can choose which `tokio-tungstenite` dependency you use for tls, all of the three following features map on the counterpart there, but all three enable the `wss://` protocol:
+
+- `websocket-native-tls`
+- `websocket-rustls-tls-native-roots`
+- `websocket-rustls-tls-webpki-roots`
+
+### `tracing-opentelemetry-text-map-propagation`
+
+Causes the Strangler to propagate tracing information to the stranglee. This could be useful to gather information about what exactly is going on.
+This only works if there is an active `opentelemetry` context in the current `tracing` span, and you've installed the `opentelemetry::sdk::propagation::TraceContextPropagator` as the `opentelemetry::global::set_text_map_propagator`.

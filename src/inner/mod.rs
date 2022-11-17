@@ -8,6 +8,9 @@ use crate::WebSocketScheme;
 #[cfg(feature = "websocket")]
 mod websocket;
 
+#[cfg(feature = "tracing-opentelemetry-text-map-propagation")]
+mod tracing_opentelemetry_text_map_propagation;
+
 #[axum::async_trait]
 pub(crate) trait InnerStrangler {
     async fn forward_call_to_strangled(
@@ -46,6 +49,14 @@ where
                 *host =
                     axum::http::HeaderValue::from_str(uri.authority().unwrap().as_str()).unwrap()
             }
+        }
+
+        #[cfg(feature = "tracing-opentelemetry-text-map-propagation")]
+        {
+            req =
+                tracing_opentelemetry_text_map_propagation::inject_opentelemetry_context_into_request(
+                    req,
+                );
         }
 
         *req.uri_mut() = uri;

@@ -111,7 +111,6 @@ fn tungstenite_close_code_to_axum(
     code.into()
 }
 
-#[tracing::instrument(skip_all)]
 async fn on_websocket_upgrade(
     socket: WebSocket,
     strangled_websocket: tokio_tungstenite::WebSocketStream<
