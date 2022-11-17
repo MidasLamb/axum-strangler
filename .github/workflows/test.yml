@@ -21,4 +21,4 @@ jobs:
         uses: actions-rs/cargo@v1
         with:
           command: hack
-          args: test --feature-powerset
+          args: test --feature-powerset --group-features websocket-native-tls,websocket-rustls-tls-native-roots,websocket-rustls-tls-webpki-roots

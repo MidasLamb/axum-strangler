@@ -17,8 +17,11 @@ tokio = { version = "1.20.0", default-features = false, features = [
     "macros",
 ], optional = true }
 futures-util = { version = "0.3.21", features = ["futures-sink"] }
-tracing = "0.1.36"
 hyper-tls = { version = "0.5.0", optional = true }
+
+tracing = { version = "0.1.36", optional = true }
+opentelemetry = { version = "0.18.0", optional = true }
+tracing-opentelemetry = { version = "0.18.0", optional = true }
 
 [dev-dependencies]
 reqwest = "0.11.11"
@@ -42,7 +45,11 @@ websocket-rustls-tls-webpki-roots = [
     "websocket",
     "tokio-tungstenite?/rustls-tls-webpki-roots",
 ]
-
+tracing-opentelemetry-text-map-propagation = [
+    "dep:tracing",
+    "dep:opentelemetry",
+    "dep:tracing-opentelemetry",
+]
 
 [[example]]
 name = "simple_server"
