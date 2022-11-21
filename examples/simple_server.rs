@@ -3,7 +3,7 @@ use axum::{
     routing::get,
     Router,
 };
-use axum_strangler::StranglerService;
+use axum_strangler::Strangler;
 use tracing_subscriber::prelude::*;
 
 #[tokio::main]
@@ -34,7 +34,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     println!("Strangler is listening on port {}", strangler_port);
 
-    let strangler_svc = StranglerService::new(axum::http::uri::Authority::try_from(format!(
+    let strangler_svc = Strangler::new(axum::http::uri::Authority::try_from(format!(
         "127.0.0.1:{}",
         stranglee_port
     ))?);

@@ -6,7 +6,7 @@ A utility crate to be able to easily use the Strangler Fig pattern with the Axum
 
 To support the usecase where you want to rewrite services in Rust, but you can't justify the
 cost of migrating everything over all at once.
-With the `StranglerService`, you can put the Rustified service in front of the service you want
+With the `Strangler`, you can put the Rustified service in front of the service you want
 to migrate, and out of the box, almost everything should still work.
 While migrating you slowly add more logic/routes to the Rust service and automatically those routes
 won't be handled by the service you're migrating away from.
@@ -17,7 +17,7 @@ won't be handled by the service you're migrating away from.
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // We want to forward requests we don't handle ourselves to localhost:3333
-    let strangler_svc = axum_strangler::StranglerService::new(
+    let strangler_svc = axum_strangler::Strangler::new(
         axum::http::uri::Authority::from_static("127.0.0.1:3333"),
     );
 

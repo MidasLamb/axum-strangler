@@ -38,7 +38,7 @@ pub enum WebSocketScheme {
 /// ```rust
 /// #[tokio::main]
 /// async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-///     let strangler_svc = axum_strangler::StranglerService::new(
+///     let strangler_svc = axum_strangler::Strangler::new(
 ///         axum::http::uri::Authority::from_static("127.0.0.1:3333"),
 ///     );
 ///     let router = axum::Router::new().fallback(strangler_svc);
@@ -52,21 +52,31 @@ pub enum WebSocketScheme {
 /// }
 /// ```
 #[derive(Clone)]
-pub struct StranglerService {
+pub struct Strangler {
     inner: Arc<dyn inner::InnerStrangler + Send + Sync>,
 }
 
-impl StranglerService {
+impl Strangler {
+    /// Creates a new `Strangler` for
     pub fn new(strangled_authority: axum::http::uri::Authority) -> Self {
-        StranglerService::builder(strangled_authority).build()
+        Strangler::builder(strangled_authority).build()
     }
 
     pub fn builder(strangled_authority: axum::http::uri::Authority) -> builder::StranglerBuilder {
         builder::StranglerBuilder::new(strangled_authority)
     }
+
+    /// Forwards the request to the strangled service.
+    ///
+    pub async fn forward_to_strangled(
+        &self,
+        req: axum::http::Request<axum::body::Body>,
+    ) -> axum::response::Response {
+        self.inner.forward_call_to_strangled(req).await
+    }
 }
 
-impl Service<axum::http::Request<axum::body::Body>> for StranglerService {
+impl Service<axum::http::Request<axum::body::Body>> for Strangler {
     type Response = axum::response::Response;
     type Error = Infallible;
     type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
@@ -91,8 +101,8 @@ mod tests {
     use axum::{routing::get, Extension, Router};
 
     /// Create a mock service that's not connecting to anything.
-    fn make_svc() -> StranglerService {
-        StranglerService::new(axum::http::uri::Authority::from_static("127.0.0.1:0"))
+    fn make_svc() -> Strangler {
+        Strangler::new(axum::http::uri::Authority::from_static("127.0.0.1:0"))
     }
 
     #[tokio::test]
@@ -128,7 +138,7 @@ mod tests {
         let strangler_tcp = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let strangler_port = strangler_tcp.local_addr().unwrap().port();
 
-        let strangler_svc = StranglerService::new(
+        let strangler_svc = Strangler::new(
             axum::http::uri::Authority::try_from(format!("127.0.0.1:{}", stranglee_port)).unwrap(),
         );
 
