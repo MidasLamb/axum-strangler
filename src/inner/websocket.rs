@@ -205,7 +205,7 @@ mod tests {
         let strangler_tcp = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let strangler_port = strangler_tcp.local_addr().unwrap().port();
 
-        let strangler_svc = StranglerService::new(
+        let strangler_svc = Strangler::new(
             axum::http::uri::Authority::try_from(format!("127.0.0.1:{}", stranglee_port)).unwrap(),
         );
 

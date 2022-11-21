@@ -4,7 +4,7 @@ use std::sync::Arc;
 use crate::WebSocketScheme;
 use crate::{
     inner::{InnerStrangler, InnerStranglerService},
-    HttpScheme, StranglerService,
+    HttpScheme, Strangler,
 };
 
 pub struct StranglerBuilder {
@@ -56,7 +56,7 @@ impl StranglerBuilder {
         }
     }
 
-    pub fn build(self) -> StranglerService {
+    pub fn build(self) -> Strangler {
         let inner: Arc<dyn InnerStrangler + Send + Sync> = match self.http_scheme {
             HttpScheme::HTTP => {
                 let inner = InnerStranglerService::new(
@@ -85,6 +85,6 @@ impl StranglerBuilder {
             }
         };
 
-        StranglerService { inner }
+        Strangler { inner }
     }
 }
