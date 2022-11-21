@@ -40,7 +40,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 Allows forwarding to another server that only accepts HTTPS traffic:
 
 ```rust
-let strangler_svc = axum_strangler::StranglerService::builder(
+let strangler_svc = axum_strangler::Strangler::builder(
     axum::http::uri::Authority::from_static("127.0.0.1:3333"),
 ).with_http_scheme(axum_strangler::HttpScheme::HTTPS).build();
 ```

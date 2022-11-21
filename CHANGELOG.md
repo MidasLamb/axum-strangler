@@ -3,6 +3,7 @@
 ## 0.4.0-rc.2
 
 - Add a function to allow a user to also easily forward requests, if they want to use it behind their own logic on whether or not to forward it.
+- Rename `StranglerService` to `Strangler`
 
 ## 0.4.0-rc.1
 
