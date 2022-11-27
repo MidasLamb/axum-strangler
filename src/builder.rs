@@ -8,7 +8,7 @@ use crate::{
 };
 
 pub struct StranglerBuilder {
-    authority: axum::http::uri::Authority,
+    authority: http::uri::Authority,
     http_scheme: HttpScheme,
     #[cfg(feature = "websocket")]
     web_socket_scheme: WebSocketScheme,
@@ -16,7 +16,7 @@ pub struct StranglerBuilder {
 }
 
 impl StranglerBuilder {
-    pub fn new(authority: axum::http::uri::Authority) -> Self {
+    pub fn new(authority: http::uri::Authority) -> Self {
         Self {
             authority,
             http_scheme: HttpScheme::HTTP,
@@ -43,9 +43,9 @@ impl StranglerBuilder {
         }
     }
 
-    /// Whether or not the service should rewrite the `host` header to the strangled target, or leave it be as is.
+    /// Whether the service should rewrite the `host` header to the strangled target, or leave it be as is.
     /// If the other service is behind e.g. a `traefik` ingress controller or `nginx`, you probably want to set this
-    /// to `true`.
+    /// to `true`, otherwise those proxies won't know where to send the request.
     pub fn rewrite_strangled_request_host_header(
         self,
         rewrite_strangled_request_host_header: bool,
@@ -56,6 +56,7 @@ impl StranglerBuilder {
         }
     }
 
+    /// Turns the builder into a `Strangler`.
     pub fn build(self) -> Strangler {
         let inner: Arc<dyn InnerStrangler + Send + Sync> = match self.http_scheme {
             HttpScheme::HTTP => {

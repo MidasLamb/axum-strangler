@@ -24,7 +24,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Add it as a fallback so everything that isn't covered by routes, get forwarded to the strangled service.
     let router = axum::Router::new()
         .route("/hello",  get(|| async { "Hello, World!" }))
-        .fallback(strangler_svc);
+        .fallback_service(strangler_svc);
 
     axum::Server::bind(&"127.0.0.1:0".parse()?)
         .serve(router.into_make_service())

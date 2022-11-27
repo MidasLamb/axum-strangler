@@ -1,8 +1,6 @@
 use axum::extract::ws::Message as AxumMessage;
-use axum::{
-    extract::{ws::WebSocket, RequestParts},
-    http::Uri,
-};
+use axum::extract::FromRequestParts;
+use axum::{extract::ws::WebSocket, http::Uri};
 use futures_util::{SinkExt, StreamExt};
 use tokio_tungstenite::tungstenite::protocol::Message as TungsteniteMessage;
 
@@ -15,18 +13,15 @@ impl<C> InnerStranglerService<C> {
         &self,
         req: axum::http::Request<axum::body::Body>,
     ) -> Result<axum::response::Response, axum::http::Request<axum::body::Body>> {
-        let mut request_parts = RequestParts::new(req);
-        let wsu: axum::extract::ws::WebSocketUpgrade = match request_parts.extract().await {
-            Ok(wsu) => wsu,
-            Err(_) => {
-                let req: Result<axum::http::Request<axum::body::Body>, _> =
-                    request_parts.extract().await;
-                return Err(req.unwrap());
-            }
-        };
-
-        let req: Result<axum::http::Request<axum::body::Body>, _> = request_parts.extract().await;
-        let req = req.unwrap();
+        let (mut parts, body) = req.into_parts();
+        let wsu: axum::extract::ws::WebSocketUpgrade =
+            match FromRequestParts::from_request_parts(&mut parts, &()).await {
+                Ok(wsu) => wsu,
+                Err(_) => {
+                    let req = http::Request::from_parts(parts, body);
+                    return Err(req);
+                }
+            };
 
         let strangled_authority = self.strangled_authority.clone();
         let strangled_scheme = match self.strangled_web_socket_scheme {
@@ -42,7 +37,7 @@ impl<C> InnerStranglerService<C> {
         let uri = Uri::builder()
             .authority(strangled_authority)
             .scheme(strangled_scheme)
-            .path_and_query(req.uri().path_and_query().cloned().unwrap())
+            .path_and_query(parts.uri.path_and_query().cloned().unwrap())
             .build()
             .unwrap();
 
@@ -225,7 +220,7 @@ mod tests {
         });
 
         let background_strangler_handle = tokio::spawn(async move {
-            let router = Router::new().fallback(strangler_svc);
+            let router = Router::new().fallback_service(strangler_svc);
             axum::Server::from_tcp(strangler_tcp)
                 .unwrap()
                 .serve(router.into_make_service())

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.0-rc.3
+
+- Update docs
+- Update for `axum` `0.6.0`
+- Port over partially to `axum-core` (except for websockets)
+
 ## 0.4.0-rc.2
 
 - Add a function to allow a user to also easily forward requests, if they want to use it behind their own logic on whether or not to forward it.

@@ -1,10 +1,10 @@
 use std::str::FromStr;
 
-use axum::http::HeaderValue;
+use http::HeaderValue;
 use opentelemetry::propagation::Injector;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
-type Request = axum::http::Request<axum::body::Body>;
+type Request = http::Request<hyper::body::Body>;
 
 pub fn inject_opentelemetry_context_into_request(mut request: Request) -> Request {
     let context = tracing::Span::current().context();

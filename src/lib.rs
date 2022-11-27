@@ -1,8 +1,93 @@
 //! # Axum Strangler
-//! A little utility to do the Strangler Fig pattern in the Axum framework without having to use
-//! some gateway.
+//! A `tower_service::Service` for use in the `axum` web framework to apply the  Strangler Fig pattern.
 //! This makes "strangling" a bit easier, as everything that is handled by the "strangler" will
-//! automatically no longer be forwarded to the "stranglee" (a.k.a. the old service).
+//! automatically no longer be forwarded to the "stranglee" or "strangled application" (a.k.a. the old application).
+//!
+//! ## Example
+//! ```rust
+//! #[tokio::main]
+//! async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+//!     let strangler = axum_strangler::Strangler::new(
+//!         axum::http::uri::Authority::from_static("127.0.0.1:3333"),
+//!     );
+//!     let router = axum::Router::new().fallback_service(strangler);
+//!     axum::Server::bind(&"127.0.0.1:0".parse()?)
+//!         .serve(router.into_make_service())
+//!         # .with_graceful_shutdown(async {
+//!         # // Shut down immediately
+//!         # })
+//!         .await?;
+//!     Ok(())
+//! }
+//! ```
+//!
+//! ## Caveats
+//! Note that when registering a route with `axum`, all requests will be handled by it, even if you don't register anything for the specific method.
+//! This means that in the following snippet, requests for `/new` with the method
+//! POST, PUT, DELETE, OPTIONS, HEAD, PATCH, or TRACE will no longer be forwarded to the strangled application:
+//! ```rust
+//! async fn handler() {}
+//!
+//! #[tokio::main]
+//! async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+//!     let strangler = axum_strangler::Strangler::new(
+//!         axum::http::uri::Authority::from_static("127.0.0.1:3333"),
+//!     );
+//!     let router = axum::Router::new()
+//!         .route(
+//! 	         "/test",
+//!              axum::routing::get(handler)
+//!     	 )
+//!         .fallback_service(strangler);
+//!     axum::Server::bind(&"127.0.0.1:0".parse()?)
+//!         .serve(router.into_make_service())
+//!         # .with_graceful_shutdown(async {
+//!         # // Shut down immediately
+//!         # })
+//!         .await?;
+//!     Ok(())
+//! }
+//! ```
+//!
+//! If you only want to implement a single method and still forward the rest, you can do so by adding the strangler as the fallback
+//! for that specific `MethodRouter`:
+//! ```rust
+//! async fn handler() {}
+//!
+//! #[tokio::main]
+//! async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+//!     let strangler = axum_strangler::Strangler::new(
+//!         axum::http::uri::Authority::from_static("127.0.0.1:3333"),
+//!     );
+//!     let router = axum::Router::new()
+//!         .route(
+//!             "/test",
+//!             axum::routing::get(handler)
+//!                 .fallback_service(strangler.clone())
+//!         )
+//!         .fallback_service(strangler);
+//!     axum::Server::bind(&"127.0.0.1:0".parse()?)
+//!         .serve(router.into_make_service())
+//!         # .with_graceful_shutdown(async {
+//!         # // Shut down immediately
+//!         # })
+//!         .await?;
+//!     Ok(())
+//! }
+//! ```
+//!
+//! ## Websocket support
+//! If you enable the feature `websocket` (and possibly one of the supporting tls ones: websocket-native-tls,
+//! websocket-rustls-tls-native-roots, websocket-rustls-tls-webpki-roots), a websocket will be set up, and each websocket
+//! message will be relayed.
+//!
+//! ## Tracing propagation
+//! Enabling the `tracing-opentelemetry-text-map-propagation` feature, will cause traceparent header to be set on
+//! requests that get forwarded, based on the current `tracing` (& `tracing-opentelemetry`) context.
+//!
+//! Note that this requires the `opentelemetry` `TextMapPropagator` to be installed.
+
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 use std::{
     convert::Infallible,
@@ -19,11 +104,13 @@ mod inner;
 
 pub enum HttpScheme {
     HTTP,
-    #[cfg(feature = "https")]
+    #[cfg(any(docsrs, feature = "https"))]
+    #[cfg_attr(docsrs, doc(cfg(feature = "https")))]
     HTTPS,
 }
 
-#[cfg(feature = "websocket")]
+#[cfg(any(docsrs, feature = "websocket"))]
+#[cfg_attr(docsrs, doc(cfg(feature = "websocket")))]
 pub enum WebSocketScheme {
     WS,
     #[cfg(any(
@@ -31,17 +118,27 @@ pub enum WebSocketScheme {
         feature = "websocket-rustls-tls-native-roots",
         feature = "websocket-rustls-tls-webpki-roots"
     ))]
+    #[cfg_attr(
+        docsrs,
+        doc(cfg(any(
+            feature = "websocket-native-tls",
+            feature = "websocket-rustls-tls-native-roots",
+            feature = "websocket-rustls-tls-webpki-roots"
+        )))
+    )]
     WSS,
 }
 
-/// Service that forwards all requests to another service
+/// Forwards all requests to another application.
+/// Can be used in a lot of places, but the most common one would be as a `.fallback` on an `axum` `Router`.
+/// # Example
 /// ```rust
 /// #[tokio::main]
 /// async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 ///     let strangler_svc = axum_strangler::Strangler::new(
 ///         axum::http::uri::Authority::from_static("127.0.0.1:3333"),
 ///     );
-///     let router = axum::Router::new().fallback(strangler_svc);
+///     let router = axum::Router::new().fallback_service(strangler_svc);
 ///     axum::Server::bind(&"127.0.0.1:0".parse()?)
 ///         .serve(router.into_make_service())
 ///         # .with_graceful_shutdown(async {
@@ -58,26 +155,27 @@ pub struct Strangler {
 
 impl Strangler {
     /// Creates a new `Strangler` for
-    pub fn new(strangled_authority: axum::http::uri::Authority) -> Self {
+    pub fn new(strangled_authority: http::uri::Authority) -> Self {
         Strangler::builder(strangled_authority).build()
     }
 
-    pub fn builder(strangled_authority: axum::http::uri::Authority) -> builder::StranglerBuilder {
+    pub fn builder(strangled_authority: http::uri::Authority) -> builder::StranglerBuilder {
         builder::StranglerBuilder::new(strangled_authority)
     }
 
     /// Forwards the request to the strangled service.
-    ///
+    /// Meant to be used when you want to send something to the strangled application
+    /// based on some custom logic.
     pub async fn forward_to_strangled(
         &self,
-        req: axum::http::Request<axum::body::Body>,
-    ) -> axum::response::Response {
+        req: http::Request<hyper::body::Body>,
+    ) -> axum_core::response::Response {
         self.inner.forward_call_to_strangled(req).await
     }
 }
 
-impl Service<axum::http::Request<axum::body::Body>> for Strangler {
-    type Response = axum::response::Response;
+impl Service<http::Request<hyper::body::Body>> for Strangler {
+    type Response = axum_core::response::Response;
     type Error = Infallible;
     type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
 
@@ -85,7 +183,7 @@ impl Service<axum::http::Request<axum::body::Body>> for Strangler {
         Poll::Ready(Ok(()))
     }
 
-    fn call(&mut self, req: axum::http::Request<axum::body::Body>) -> Self::Future {
+    fn call(&mut self, req: http::Request<hyper::body::Body>) -> Self::Future {
         let inner = self.inner.clone();
 
         let fut = async move { Ok(inner.forward_call_to_strangled(req).await) };
@@ -107,13 +205,13 @@ mod tests {
 
     #[tokio::test]
     async fn can_be_used_as_fallback() {
-        let router = Router::new().fallback(make_svc());
+        let router = Router::new().fallback_service(make_svc());
         axum::Server::bind(&"0.0.0.0:0".parse().unwrap()).serve(router.into_make_service());
     }
 
     #[tokio::test]
     async fn can_be_used_for_a_route() {
-        let router = Router::new().route("/api", make_svc());
+        let router = Router::new().route_service("/api", make_svc());
         axum::Server::bind(&"0.0.0.0:0".parse().unwrap()).serve(router.into_make_service());
     }
 
@@ -158,7 +256,7 @@ mod tests {
         });
 
         let background_strangler_handle = tokio::spawn(async move {
-            let router = Router::new().fallback(strangler_svc);
+            let router = Router::new().fallback_service(strangler_svc);
             axum::Server::from_tcp(strangler_tcp)
                 .unwrap()
                 .serve(router.into_make_service())
