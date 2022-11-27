@@ -58,7 +58,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             .unwrap();
     });
 
-    let router = Router::new().fallback(strangler_svc);
+    let router = Router::new().fallback_service(strangler_svc);
     axum::Server::from_tcp(strangler_tcp)?
         .serve(router.into_make_service())
         .with_graceful_shutdown(async {

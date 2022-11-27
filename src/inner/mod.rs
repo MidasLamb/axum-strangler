@@ -1,4 +1,5 @@
-use axum::http::Uri;
+use async_trait::async_trait;
+use http::Uri;
 
 use crate::HttpScheme;
 
@@ -11,23 +12,23 @@ mod websocket;
 #[cfg(feature = "tracing-opentelemetry-text-map-propagation")]
 mod tracing_opentelemetry_text_map_propagation;
 
-#[axum::async_trait]
+#[async_trait]
 pub(crate) trait InnerStrangler {
     async fn forward_call_to_strangled(
         &self,
-        req: axum::http::Request<axum::body::Body>,
-    ) -> axum::response::Response;
+        req: http::Request<hyper::body::Body>,
+    ) -> axum_core::response::Response;
 }
 
-#[axum::async_trait]
+#[async_trait]
 impl<C> InnerStrangler for InnerStranglerService<C>
 where
     C: hyper::client::connect::Connect + Clone + Send + Sync + 'static,
 {
     async fn forward_call_to_strangled(
         &self,
-        req: axum::http::Request<axum::body::Body>,
-    ) -> axum::response::Response {
+        req: http::Request<hyper::body::Body>,
+    ) -> axum_core::response::Response {
         let mut req = match self.handle_websocket_upgrade_request(req).await {
             Ok(r) => {
                 return r;
@@ -46,8 +47,7 @@ where
 
         if self.rewrite_strangled_request_host_header {
             if let Some(host) = req.headers_mut().get_mut("host") {
-                *host =
-                    axum::http::HeaderValue::from_str(uri.authority().unwrap().as_str()).unwrap()
+                *host = http::HeaderValue::from_str(uri.authority().unwrap().as_str()).unwrap()
             }
         }
 
@@ -63,7 +63,7 @@ where
 
         let r = self.http_client.request(req).await.unwrap();
 
-        let mut response_builder = axum::response::Response::builder();
+        let mut response_builder = axum_core::response::Response::builder();
         response_builder = response_builder.status(r.status());
 
         if let Some(headers) = response_builder.headers_mut() {
@@ -71,8 +71,8 @@ where
         }
 
         let response = response_builder
-            .body(axum::body::boxed(r))
-            .map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR);
+            .body(axum_core::body::boxed(r))
+            .map_err(|_| http::StatusCode::INTERNAL_SERVER_ERROR);
 
         match response {
             Ok(response) => response,
@@ -82,7 +82,7 @@ where
 }
 
 pub(crate) struct InnerStranglerService<C> {
-    strangled_authority: axum::http::uri::Authority,
+    strangled_authority: http::uri::Authority,
     strangled_http_scheme: HttpScheme,
     #[cfg(feature = "websocket")]
     strangled_web_socket_scheme: WebSocketScheme,
@@ -95,7 +95,7 @@ where
     C: hyper::client::connect::Connect + Clone + Send + Sync + 'static,
 {
     pub(crate) fn new(
-        strangled_authority: axum::http::uri::Authority,
+        strangled_authority: http::uri::Authority,
         strangled_http_scheme: HttpScheme,
         #[cfg(feature = "websocket")] strangled_web_socket_scheme: WebSocketScheme,
         http_client: hyper::Client<C>,
@@ -114,16 +114,16 @@ where
     #[cfg(not(feature = "websocket"))]
     async fn handle_websocket_upgrade_request(
         &self,
-        req: axum::http::Request<axum::body::Body>,
-    ) -> Result<axum::response::Response, axum::http::Request<axum::body::Body>> {
+        req: http::Request<hyper::body::Body>,
+    ) -> Result<axum_core::response::Response, http::Request<hyper::body::Body>> {
         Err(req)
     }
 
-    fn get_http_scheme(&self) -> axum::http::uri::Scheme {
+    fn get_http_scheme(&self) -> http::uri::Scheme {
         match self.strangled_http_scheme {
-            HttpScheme::HTTP => axum::http::uri::Scheme::HTTP,
+            HttpScheme::HTTP => http::uri::Scheme::HTTP,
             #[cfg(feature = "https")]
-            HttpScheme::HTTPS => axum::http::uri::Scheme::HTTPS,
+            HttpScheme::HTTPS => http::uri::Scheme::HTTPS,
         }
     }
 }
