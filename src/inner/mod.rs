@@ -29,7 +29,7 @@ where
         &self,
         req: http::Request<hyper::body::Body>,
     ) -> axum_core::response::Response {
-        let mut req = match self.handle_websocket_upgrade_request(req).await {
+        let req = match self.handle_websocket_upgrade_request(req).await {
             Ok(r) => {
                 return r;
             }
@@ -38,10 +38,13 @@ where
 
         let strangled_authority = self.strangled_authority.clone();
         let strangled_scheme = self.get_http_scheme();
+
+        let (mut req, original_uri) = get_original_uri(req).await;
+
         let uri = Uri::builder()
             .scheme(strangled_scheme)
             .authority(strangled_authority)
-            .path_and_query(req.uri().path_and_query().cloned().unwrap())
+            .path_and_query(dbg!(original_uri.path_and_query().cloned().unwrap()))
             .build()
             .unwrap();
 
@@ -59,7 +62,7 @@ where
                 );
         }
 
-        *req.uri_mut() = uri;
+        *req.uri_mut() = dbg!(uri);
 
         let r = self.http_client.request(req).await.unwrap();
 
@@ -79,6 +82,32 @@ where
             Err(_) => todo!(),
         }
     }
+}
+
+#[cfg(not(feature = "nested-routers"))]
+async fn get_original_uri(
+    req: http::Request<hyper::body::Body>,
+) -> (http::Request<hyper::body::Body>, http::Uri) {
+    let uri = req.uri().clone();
+    (req, uri)
+}
+
+#[cfg(feature = "nested-routers")]
+async fn get_original_uri(
+    req: http::Request<hyper::body::Body>,
+) -> (http::Request<hyper::body::Body>, http::Uri) {
+    use axum::extract::FromRequestParts;
+
+    let (mut parts, body) = req.into_parts();
+
+    let original_uri = axum::extract::OriginalUri::from_request_parts(&mut parts, &())
+        .await
+        .unwrap()
+        .0;
+
+    let req = http::Request::from_parts(parts, body);
+
+    (req, original_uri)
 }
 
 pub(crate) struct InnerStranglerService<C> {

@@ -35,6 +35,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
 ## Feature flags
 
+### `nested-routers`
+If you are using an axum router `nested` inside of another one, the route forwarding will not work as expected, as the path that get's forwarded is only the piece of the path defined in the nested router, not the entire path
+(so if you nest a router at `/api`, all requests would be forwarded without the `/api`, and only what comes after it).
+
+To fix this, you can enable the feature flag `nested-routers`, which will allow it to retrieve the `OriginalUri` to properly forward it.
+
 ### `https`
 
 Allows forwarding to another server that only accepts HTTPS traffic:
