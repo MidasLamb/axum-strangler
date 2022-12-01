@@ -35,9 +35,9 @@
 //!     );
 //!     let router = axum::Router::new()
 //!         .route(
-//! 	         "/test",
+//!             "/test",
 //!              axum::routing::get(handler)
-//!     	 )
+//!         )
 //!         .fallback_service(strangler);
 //!     axum::Server::bind(&"127.0.0.1:0".parse()?)
 //!         .serve(router.into_make_service())
@@ -197,6 +197,10 @@ mod tests {
 
     use super::*;
     use axum::{routing::get, Extension, Router};
+    use wiremock::{
+        matchers::{method, path},
+        Mock, ResponseTemplate,
+    };
 
     /// Create a mock service that's not connecting to anything.
     fn make_svc() -> Strangler {
@@ -306,5 +310,56 @@ mod tests {
 
         stranglee_joinhandle.await.unwrap();
         strangler_joinhandle.await.unwrap();
+    }
+
+    #[cfg(feature = "nested-routers")]
+    #[tokio::test]
+    async fn handles_nested_routers() {
+        let mock_server = wiremock::MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/api/something"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&mock_server)
+            .await;
+
+        Mock::given(method("GET"))
+            .and(path("/api/something-else"))
+            .respond_with(ResponseTemplate::new(418))
+            .mount(&mock_server)
+            .await;
+
+        let strangler_svc = Strangler::new(
+            axum::http::uri::Authority::try_from(format!(
+                "127.0.0.1:{}",
+                mock_server.address().port()
+            ))
+            .unwrap(),
+        );
+
+        let nested_router = Router::new()
+            .route_service("/something", strangler_svc.clone())
+            .route_service("/something-else", strangler_svc.clone());
+        let router = Router::new()
+            .nest("/api", nested_router)
+            .fallback_service(strangler_svc);
+
+        let req = http::Request::get("/api/something")
+            .body(hyper::body::Body::empty())
+            .unwrap();
+        let res = router.clone().call(req).await.unwrap();
+        assert_eq!(res.status(), http::StatusCode::OK);
+
+        let req = http::Request::get("/api/something-else")
+            .body(hyper::body::Body::empty())
+            .unwrap();
+        let res = router.clone().call(req).await.unwrap();
+        assert_eq!(res.status(), http::StatusCode::IM_A_TEAPOT);
+
+        let req = http::Request::get("/not-api/something-else")
+            .body(hyper::body::Body::empty())
+            .unwrap();
+        let res = router.clone().call(req).await.unwrap();
+        assert_eq!(res.status(), http::StatusCode::NOT_FOUND);
     }
 }
