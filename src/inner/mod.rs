@@ -44,7 +44,7 @@ where
         let uri = Uri::builder()
             .scheme(strangled_scheme)
             .authority(strangled_authority)
-            .path_and_query(dbg!(original_uri.path_and_query().cloned().unwrap()))
+            .path_and_query(original_uri.path_and_query().cloned().unwrap())
             .build()
             .unwrap();
 
@@ -62,7 +62,7 @@ where
                 );
         }
 
-        *req.uri_mut() = dbg!(uri);
+        *req.uri_mut() = uri;
 
         let r = self.http_client.request(req).await.unwrap();
 
@@ -201,9 +201,7 @@ mod tests {
         );
 
         let response = inner
-            .forward_call_to_strangled(
-                dbg!(request_builder.body(axum::body::Body::empty())).unwrap(),
-            )
+            .forward_call_to_strangled(request_builder.body(axum::body::Body::empty()).unwrap())
             .await;
 
         assert_eq!(response.status(), axum::http::status::StatusCode::OK)
@@ -245,7 +243,7 @@ mod tests {
 
         let response = inner
             .forward_call_to_strangled(
-                dbg!(request_builder.body(axum::body::Body::empty())).unwrap(),
+                request_builder.body(axum::body::Body::empty()).unwrap(),
             )
             .await;
 
