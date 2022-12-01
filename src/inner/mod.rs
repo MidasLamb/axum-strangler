@@ -242,9 +242,7 @@ mod tests {
         );
 
         let response = inner
-            .forward_call_to_strangled(
-                request_builder.body(axum::body::Body::empty()).unwrap(),
-            )
+            .forward_call_to_strangled(request_builder.body(axum::body::Body::empty()).unwrap())
             .await;
 
         assert_eq!(response.status(), axum::http::status::StatusCode::OK)
