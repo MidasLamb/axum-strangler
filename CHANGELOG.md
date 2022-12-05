@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.0-rc.5
+
+- Remove `axum` from websocket implementation
+
 ## 0.4.0-rc.4
 
 - Add feature `nested-routers` to be able to handle nested axum routers.

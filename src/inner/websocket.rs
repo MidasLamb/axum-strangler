@@ -1,27 +1,46 @@
-use axum::extract::ws::Message as AxumMessage;
-use axum::extract::FromRequestParts;
-use axum::{extract::ws::WebSocket, http::Uri};
 use futures_util::{SinkExt, StreamExt};
-use tokio_tungstenite::tungstenite::protocol::Message as TungsteniteMessage;
+use http::header::HeaderName;
+use http::{header, HeaderMap, HeaderValue, Response, StatusCode};
+use hyper::upgrade::{OnUpgrade, Upgraded};
+use sha1::{Digest, Sha1};
+use tokio_tungstenite::tungstenite::protocol::{self, WebSocketConfig};
+use tokio_tungstenite::WebSocketStream;
 
 use crate::inner::InnerStranglerService;
 use crate::WebSocketScheme;
 
 #[cfg(feature = "websocket")]
 impl<C> InnerStranglerService<C> {
+    /// Implementation adapted from `axum::extract::ws`
     pub(super) async fn handle_websocket_upgrade_request(
         &self,
-        req: axum::http::Request<axum::body::Body>,
-    ) -> Result<axum::response::Response, axum::http::Request<axum::body::Body>> {
+        req: http::Request<hyper::body::Body>,
+    ) -> Result<axum_core::response::Response, http::Request<hyper::body::Body>> {
         let (mut parts, body) = req.into_parts();
-        let wsu: axum::extract::ws::WebSocketUpgrade =
-            match FromRequestParts::from_request_parts(&mut parts, &()).await {
-                Ok(wsu) => wsu,
-                Err(_) => {
-                    let req = http::Request::from_parts(parts, body);
-                    return Err(req);
-                }
-            };
+        if parts.method != http::Method::GET {
+            return Err(http::Request::from_parts(parts, body));
+        }
+
+        if !header_contains(&parts.headers, header::CONNECTION, "upgrade")
+            || !header_eq(&parts.headers, header::UPGRADE, "websocket")
+            || !header_eq(&parts.headers, header::SEC_WEBSOCKET_VERSION, "13")
+        {
+            return Err(http::Request::from_parts(parts, body));
+        }
+
+        let sec_websocket_key = parts
+            .headers
+            .remove(header::SEC_WEBSOCKET_KEY)
+            .ok_or_else(|| todo!())
+            .unwrap();
+
+        let on_upgrade = parts
+            .extensions
+            .remove::<OnUpgrade>()
+            .ok_or_else(|| todo!())
+            .unwrap();
+
+        let sec_websocket_protocol = parts.headers.get(header::SEC_WEBSOCKET_PROTOCOL).cloned();
 
         let strangled_authority = self.strangled_authority.clone();
         let strangled_scheme = match self.strangled_web_socket_scheme {
@@ -34,80 +53,87 @@ impl<C> InnerStranglerService<C> {
             WebSocketScheme::WSS => "wss",
         };
 
-        let uri = Uri::builder()
+        let uri = http::Uri::builder()
             .authority(strangled_authority)
             .scheme(strangled_scheme)
             .path_and_query(parts.uri.path_and_query().cloned().unwrap())
             .build()
             .unwrap();
 
+        let websocketconfig = WebSocketConfig::default();
+
+        let protocol = sec_websocket_protocol.clone();
+
         let (connection, _) = tokio_tungstenite::connect_async(uri).await.unwrap();
-        Ok(wsu.on_upgrade(|socket| on_websocket_upgrade(socket, connection)))
-    }
-}
 
-trait Axumable {
-    fn to_axum(self) -> AxumMessage;
-}
+        tokio::spawn(async move {
+            let upgraded = on_upgrade.await.expect("connection upgrade failed");
+            let socket = WebSocketStream::from_raw_socket(
+                upgraded,
+                protocol::Role::Server,
+                Some(websocketconfig),
+            )
+            .await;
+            on_websocket_upgrade(socket, connection).await;
+        });
 
-impl Axumable for TungsteniteMessage {
-    fn to_axum(self) -> AxumMessage {
-        match self {
-            TungsteniteMessage::Text(t) => AxumMessage::Text(t),
-            TungsteniteMessage::Binary(b) => AxumMessage::Binary(b),
-            TungsteniteMessage::Ping(p) => AxumMessage::Ping(p),
-            TungsteniteMessage::Pong(p) => AxumMessage::Pong(p),
-            TungsteniteMessage::Close(c) => {
-                let close_message = c.map(|c| axum::extract::ws::CloseFrame {
-                    reason: c.reason,
-                    code: tungstenite_close_code_to_axum(c.code),
-                });
-                AxumMessage::Close(close_message)
-            }
-            TungsteniteMessage::Frame(_f) => todo!(),
+        #[allow(clippy::declare_interior_mutable_const)]
+        const UPGRADE: HeaderValue = HeaderValue::from_static("upgrade");
+        #[allow(clippy::declare_interior_mutable_const)]
+        const WEBSOCKET: HeaderValue = HeaderValue::from_static("websocket");
+
+        let mut builder = Response::builder()
+            .status(StatusCode::SWITCHING_PROTOCOLS)
+            .header(header::CONNECTION, UPGRADE)
+            .header(header::UPGRADE, WEBSOCKET)
+            .header(
+                header::SEC_WEBSOCKET_ACCEPT,
+                sign(sec_websocket_key.as_bytes()),
+            );
+
+        if let Some(protocol) = protocol {
+            builder = builder.header(header::SEC_WEBSOCKET_PROTOCOL, protocol);
         }
+
+        Ok(builder
+            .body(axum_core::body::boxed(hyper::Body::empty()))
+            .unwrap())
     }
 }
 
-trait Tungsteniteable {
-    fn to_tungstenite(self) -> TungsteniteMessage;
+/// Implementation taken from `axum::extract::ws`
+fn sign(key: &[u8]) -> HeaderValue {
+    let mut sha1 = Sha1::default();
+    sha1.update(key);
+    sha1.update(&b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11"[..]);
+    let b64 = base64::encode(sha1.finalize());
+    HeaderValue::from_maybe_shared(b64).expect("base64 is a valid value")
 }
 
-impl Tungsteniteable for AxumMessage {
-    fn to_tungstenite(self) -> TungsteniteMessage {
-        match self {
-            AxumMessage::Text(t) => TungsteniteMessage::Text(t),
-            AxumMessage::Binary(b) => TungsteniteMessage::Binary(b),
-            AxumMessage::Ping(p) => TungsteniteMessage::Ping(p),
-            AxumMessage::Pong(p) => TungsteniteMessage::Pong(p),
-            AxumMessage::Close(c) => {
-                let close_message =
-                    c.map(
-                        |c| tokio_tungstenite::tungstenite::protocol::frame::CloseFrame {
-                            reason: c.reason,
-                            code: axum_close_code_to_tungstenite(c.code),
-                        },
-                    );
-                TungsteniteMessage::Close(close_message)
-            }
-        }
+fn header_eq(headers: &HeaderMap, key: HeaderName, value: &'static str) -> bool {
+    if let Some(header) = headers.get(&key) {
+        header.as_bytes().eq_ignore_ascii_case(value.as_bytes())
+    } else {
+        false
     }
 }
 
-fn axum_close_code_to_tungstenite(
-    code: axum::extract::ws::CloseCode,
-) -> tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode {
-    tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode::from(code)
-}
+fn header_contains(headers: &HeaderMap, key: HeaderName, value: &'static str) -> bool {
+    let header = if let Some(header) = headers.get(&key) {
+        header
+    } else {
+        return false;
+    };
 
-fn tungstenite_close_code_to_axum(
-    code: tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode,
-) -> axum::extract::ws::CloseCode {
-    code.into()
+    if let Ok(header) = std::str::from_utf8(header.as_bytes()) {
+        header.to_ascii_lowercase().contains(value)
+    } else {
+        false
+    }
 }
 
 async fn on_websocket_upgrade(
-    socket: WebSocket,
+    socket: WebSocketStream<Upgraded>,
     strangled_websocket: tokio_tungstenite::WebSocketStream<
         tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
     >,
@@ -123,7 +149,7 @@ async fn on_websocket_upgrade(
             tokio::select! {
                 Some(Ok(msg)) = strangled_stream.next() => {
                     match client_sink
-                        .send(msg.to_axum())
+                        .send(msg)
                         .await {
                             Ok(_) => {},
                             Err(e) => {
@@ -149,7 +175,7 @@ async fn on_websocket_upgrade(
             tokio::select! {
                 Some(Ok(msg)) = client_stream.next() => {
                     match strangled_sink
-                        .send(msg.to_tungstenite())
+                        .send(msg)
                         .await
                         {
                             Ok(_) => {},
@@ -177,25 +203,43 @@ async fn on_websocket_upgrade(
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use crate::*;
-    use axum::{routing::get, Extension, Router};
+    use axum::{routing::get, Router};
 
     use futures_util::{SinkExt, StreamExt};
 
-    struct StartupHelper {
-        strangler_port: u16,
-        strangler_joinhandle: tokio::task::JoinHandle<()>,
-        stranglee_joinhandle: tokio::task::JoinHandle<()>,
-    }
+    #[tokio::test]
+    async fn proxies_strangled_websocket_service() {
+        // helper function
+        async fn handle_socket(mut socket: axum::extract::ws::WebSocket) {
+            // Only reply to a single message and stop.
+            if let Some(Ok(msg)) = socket.recv().await {
+                if socket.send(msg).await.is_err() {
+                    // client disconnected
+                    return;
+                }
+            }
+        }
 
-    async fn start_up_strangler_and_strangled(strangled_router: Router) -> StartupHelper {
-        let (tx, mut rx_1) = tokio::sync::broadcast::channel::<()>(1);
-        let mut rx_2 = tx.subscribe();
-        let tx_arc = Arc::new(tx);
-        let stop_channel = StopChannel(tx_arc);
+        let router = Router::new().route(
+            "/api/websocket",
+            get(|ws: axum::extract::ws::WebSocketUpgrade| async move {
+                ws.on_upgrade(|socket| handle_socket(socket))
+            }),
+        );
 
         let stranglee_tcp = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let stranglee_port = stranglee_tcp.local_addr().unwrap().port();
+
+        let _stranglee = tokio::spawn(async move {
+            axum::Server::from_tcp(stranglee_tcp)
+                .unwrap()
+                .serve(router.into_make_service())
+                .await
+                .unwrap();
+        });
 
         let strangler_tcp = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let strangler_port = strangler_tcp.local_addr().unwrap().port();
@@ -204,75 +248,14 @@ mod tests {
             axum::http::uri::Authority::try_from(format!("127.0.0.1:{}", stranglee_port)).unwrap(),
         );
 
-        let background_stranglee_handle = tokio::spawn(async move {
-            axum::Server::from_tcp(stranglee_tcp)
-                .unwrap()
-                .serve(
-                    strangled_router
-                        .layer(axum::Extension(stop_channel))
-                        .into_make_service(),
-                )
-                .with_graceful_shutdown(async {
-                    rx_1.recv().await.ok();
-                })
-                .await
-                .unwrap();
-        });
-
-        let background_strangler_handle = tokio::spawn(async move {
+        let _strangler = tokio::spawn(async move {
             let router = Router::new().fallback_service(strangler_svc);
             axum::Server::from_tcp(strangler_tcp)
                 .unwrap()
                 .serve(router.into_make_service())
-                .with_graceful_shutdown(async {
-                    rx_2.recv().await.ok();
-                })
                 .await
                 .unwrap();
         });
-
-        StartupHelper {
-            strangler_port,
-            strangler_joinhandle: background_strangler_handle,
-            stranglee_joinhandle: background_stranglee_handle,
-        }
-    }
-
-    #[derive(Clone)]
-    struct StopChannel(Arc<tokio::sync::broadcast::Sender<()>>);
-
-    #[tokio::test]
-    async fn proxies_strangled_websocket_service() {
-        // helper function
-        async fn handle_socket(
-            mut socket: axum::extract::ws::WebSocket,
-            tx_arc: Arc<tokio::sync::broadcast::Sender<()>>,
-        ) {
-            // Only reply to a single message and stop.
-            if let Some(Ok(msg)) = socket.recv().await {
-                if socket.send(msg).await.is_err() {
-                    // client disconnected
-                    return;
-                }
-            }
-            tx_arc.send(()).unwrap();
-        }
-
-        let router = Router::new().route(
-            "/api/websocket",
-            get(
-                |ws: axum::extract::ws::WebSocketUpgrade,
-                 Extension(StopChannel(tx_arc)): Extension<StopChannel>| async move {
-                    ws.on_upgrade(|socket| handle_socket(socket, tx_arc))
-                },
-            ),
-        );
-
-        let StartupHelper {
-            strangler_port,
-            strangler_joinhandle,
-            stranglee_joinhandle,
-        } = start_up_strangler_and_strangled(router).await;
 
         let message = "A websocket message";
         let (mut ws_connection, _) = tokio_tungstenite::connect_async(format!(
@@ -281,6 +264,7 @@ mod tests {
         ))
         .await
         .unwrap();
+
         ws_connection
             .send(tokio_tungstenite::tungstenite::protocol::Message::Text(
                 message.to_owned(),
@@ -294,8 +278,113 @@ mod tests {
             }
             _ => panic!("We expected text back but got something else!"),
         }
+    }
 
-        stranglee_joinhandle.await.unwrap();
-        strangler_joinhandle.await.unwrap();
+    #[tokio::test]
+    async fn proxied_websocket_closes_properly_close_from_strangled() {
+        // helper function
+        async fn handle_socket(socket: axum::extract::ws::WebSocket) {
+            // Immediately close
+            socket.close().await.unwrap();
+        }
+
+        let router = Router::new().route(
+            "/api/websocket",
+            get(|ws: axum::extract::ws::WebSocketUpgrade| async move {
+                ws.on_upgrade(|socket| handle_socket(socket))
+            }),
+        );
+
+        let stranglee_tcp = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let stranglee_port = stranglee_tcp.local_addr().unwrap().port();
+
+        let _stranglee = tokio::spawn(async move {
+            axum::Server::from_tcp(stranglee_tcp)
+                .unwrap()
+                .serve(router.into_make_service())
+                .await
+                .unwrap();
+        });
+
+        let strangler_tcp = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let strangler_port = strangler_tcp.local_addr().unwrap().port();
+
+        let strangler_svc = Strangler::new(
+            axum::http::uri::Authority::try_from(format!("127.0.0.1:{}", stranglee_port)).unwrap(),
+        );
+
+        let _strangler = tokio::spawn(async move {
+            let router = Router::new().fallback_service(strangler_svc);
+            axum::Server::from_tcp(strangler_tcp)
+                .unwrap()
+                .serve(router.into_make_service())
+                .await
+                .unwrap();
+        });
+
+        let (mut ws_connection, _) = tokio_tungstenite::connect_async(format!(
+            "ws://127.0.0.1:{}/api/websocket",
+            strangler_port
+        ))
+        .await
+        .unwrap();
+
+        let msg = ws_connection.next().await.unwrap().unwrap();
+        assert!(msg.is_close());
+    }
+
+    #[tokio::test]
+    async fn proxied_websocket_closes_properly_close_from_client() {
+        // helper function
+        async fn handle_socket(_socket: axum::extract::ws::WebSocket) {
+            // We don't get here, so doesn't matter:
+            panic!("Shouldn't get here when socket gets closed by other side?")
+        }
+
+        let router = Router::new().route(
+            "/api/websocket",
+            get(|ws: axum::extract::ws::WebSocketUpgrade| async move {
+                ws.on_upgrade(|socket| handle_socket(socket))
+            }),
+        );
+
+        let stranglee_tcp = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let stranglee_port = stranglee_tcp.local_addr().unwrap().port();
+
+        let _stranglee = tokio::spawn(async move {
+            axum::Server::from_tcp(stranglee_tcp)
+                .unwrap()
+                .serve(router.into_make_service())
+                .await
+                .unwrap();
+        });
+
+        let strangler_tcp = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let strangler_port = strangler_tcp.local_addr().unwrap().port();
+
+        let strangler_svc = Strangler::new(
+            axum::http::uri::Authority::try_from(format!("127.0.0.1:{}", stranglee_port)).unwrap(),
+        );
+
+        let _strangler = tokio::spawn(async move {
+            let router = Router::new().fallback_service(strangler_svc);
+            axum::Server::from_tcp(strangler_tcp)
+                .unwrap()
+                .serve(router.into_make_service())
+                .await
+                .unwrap();
+        });
+
+        let (mut ws_connection, _) = tokio_tungstenite::connect_async(format!(
+            "ws://127.0.0.1:{}/api/websocket",
+            strangler_port
+        ))
+        .await
+        .unwrap();
+
+        tokio::time::sleep(Duration::from_secs(2)).await;
+
+        ws_connection.close(None).await.unwrap();
+        tokio::time::sleep(Duration::from_secs(2)).await;
     }
 }
