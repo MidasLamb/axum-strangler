@@ -193,10 +193,8 @@ impl Service<http::Request<hyper::body::Body>> for Strangler {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
     use super::*;
-    use axum::{routing::get, Extension, Router};
+    use axum::{body::HttpBody, Router};
     use wiremock::{
         matchers::{method, path},
         Mock, ResponseTemplate,
@@ -219,97 +217,37 @@ mod tests {
         axum::Server::bind(&"0.0.0.0:0".parse().unwrap()).serve(router.into_make_service());
     }
 
-    #[derive(Clone)]
-    struct StopChannel(Arc<tokio::sync::broadcast::Sender<()>>);
-
-    struct StartupHelper {
-        strangler_port: u16,
-        strangler_joinhandle: tokio::task::JoinHandle<()>,
-        stranglee_joinhandle: tokio::task::JoinHandle<()>,
-    }
-
-    async fn start_up_strangler_and_strangled(strangled_router: Router) -> StartupHelper {
-        let (tx, mut rx_1) = tokio::sync::broadcast::channel::<()>(1);
-        let mut rx_2 = tx.subscribe();
-        let tx_arc = Arc::new(tx);
-        let stop_channel = StopChannel(tx_arc);
-
-        let stranglee_tcp = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let stranglee_port = stranglee_tcp.local_addr().unwrap().port();
-
-        let strangler_tcp = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let strangler_port = strangler_tcp.local_addr().unwrap().port();
-
-        let strangler_svc = Strangler::new(
-            axum::http::uri::Authority::try_from(format!("127.0.0.1:{}", stranglee_port)).unwrap(),
-        );
-
-        let background_stranglee_handle = tokio::spawn(async move {
-            axum::Server::from_tcp(stranglee_tcp)
-                .unwrap()
-                .serve(
-                    strangled_router
-                        .layer(axum::Extension(stop_channel))
-                        .into_make_service(),
-                )
-                .with_graceful_shutdown(async {
-                    rx_1.recv().await.ok();
-                })
-                .await
-                .unwrap();
-        });
-
-        let background_strangler_handle = tokio::spawn(async move {
-            let router = Router::new().fallback_service(strangler_svc);
-            axum::Server::from_tcp(strangler_tcp)
-                .unwrap()
-                .serve(router.into_make_service())
-                .with_graceful_shutdown(async {
-                    rx_2.recv().await.ok();
-                })
-                .await
-                .unwrap();
-        });
-
-        StartupHelper {
-            strangler_port,
-            strangler_joinhandle: background_strangler_handle,
-            stranglee_joinhandle: background_stranglee_handle,
-        }
-    }
-
     #[tokio::test]
     async fn proxies_strangled_http_service() {
-        let router = Router::new().route(
-            "/api/something",
-            get(
-                |Extension(StopChannel(tx_arc)): Extension<StopChannel>| async move {
-                    tx_arc.send(()).unwrap();
-                    "I'm being strangled"
-                },
-            ),
+        let mock_server = wiremock::MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/api/something"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("I'm being strangled"))
+            .mount(&mock_server)
+            .await;
+
+        let strangler_svc = Strangler::new(
+            axum::http::uri::Authority::try_from(format!(
+                "127.0.0.1:{}",
+                mock_server.address().port()
+            ))
+            .unwrap(),
         );
 
-        let StartupHelper {
-            strangler_port,
-            strangler_joinhandle,
-            stranglee_joinhandle,
-        } = start_up_strangler_and_strangled(router).await;
+        let router = Router::new().fallback_service(strangler_svc);
 
-        let c = reqwest::Client::new();
-        let r = c
-            .get(format!("http://127.0.0.1:{}/api/something", strangler_port))
-            .send()
-            .await
-            .unwrap()
-            .text()
-            .await
+        let req = http::Request::get("/api/something")
+            .body(hyper::body::Body::empty())
             .unwrap();
+        let mut res = router.clone().call(req).await.unwrap();
 
-        assert_eq!(r, "I'm being strangled");
+        assert_eq!(res.status(), http::StatusCode::OK);
 
-        stranglee_joinhandle.await.unwrap();
-        strangler_joinhandle.await.unwrap();
+        assert_eq!(
+            res.body_mut().data().await.unwrap().unwrap(),
+            "I'm being strangled".as_bytes()
+        );
     }
 
     #[cfg(feature = "nested-routers")]
