@@ -16,6 +16,7 @@ pub struct StranglerBuilder {
 }
 
 impl StranglerBuilder {
+    /// Creates a new strangler with the default options.
     pub fn new(authority: http::uri::Authority) -> Self {
         Self {
             authority,

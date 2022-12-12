@@ -36,6 +36,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 ## Feature flags
 
 ### `nested-routers`
+
 If you are using an axum router `nested` inside of another one, the route forwarding will not work as expected, as the path that get's forwarded is only the piece of the path defined in the nested router, not the entire path
 (so if you nest a router at `/api`, all requests would be forwarded without the `/api`, and only what comes after it).
 
@@ -68,3 +69,9 @@ You can choose which `tokio-tungstenite` dependency you use for tls, all of the 
 
 Causes the Strangler to propagate tracing information to the stranglee. This could be useful to gather information about what exactly is going on.
 This only works if there is an active `opentelemetry` context in the current `tracing` span, and you've installed the `opentelemetry::sdk::propagation::TraceContextPropagator` as the `opentelemetry::global::set_text_map_propagator`.
+
+## Contribution
+
+Unless you explicitly state otherwise, any contribution intentionally submitted
+for inclusion in the work by you, as defined in the Apache-2.0 license, shall be
+dual licensed as above, without any additional terms or conditions.
