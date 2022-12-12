@@ -154,7 +154,8 @@ pub struct Strangler {
 }
 
 impl Strangler {
-    /// Creates a new `Strangler` for
+    /// Creates a new `Strangler` with the default options.
+    /// For more control, see [`builder::StranglerBuilder`]
     pub fn new(strangled_authority: http::uri::Authority) -> Self {
         Strangler::builder(strangled_authority).build()
     }
